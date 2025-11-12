@@ -56,9 +56,9 @@
     <div class="container mx-auto max-w-3xl p-4 md:p-8 my-12 bg-white rounded-2xl shadow-lg">
 
         <header class="mb-8 border-b border-gray-200 pb-6">
-            <h1 class="text-3xl font-bold text-gray-900 mb-2">給与明細 自動取得ツール 手順書 (bat版)</h1>
-            <p class="text-gray-600">v1.1 (2025-11-12)</p>
-            <p class="mt-2 text-gray-700">このツールは、WEB給与明細サイトに自動ログインし、全期間のサマリーCSVを作成します。`setup.bat` と `apprun.bat` を実行するだけの簡単実行版です。</p>
+<h1 class="text-3xl font-bold text-gray-900 mb-2">給与明細 自動取得ツール 手順書 (V6.3対応版)</h1>
+<p class="text-gray-600">v1.2 (2025-11-13)</p>
+<p class="mt-2 text-gray-700">このツールは、WEB給与明細サイトに自動ログインし、全期間のサマリーCSVを作成します。ID/PWはPC固有の情報で<strong>暗号化</strong>されて <code>core/.env</code> に自動保存されます。</p>
         </header>
 
         <section class="mb-10">
@@ -100,9 +100,9 @@
     ├── <code class="bg-gray-700 text-gray-200">app.py</code>      (← アプリ本体)
     ├── <code class="bg-gray-700 text-gray-200">main_controller.py</code>
     ├── <code class="bg-gray-700 text-gray-200">... (その他 .py ファイル)</code>
+    ├── <code class="bg-gray-700 text-gray-200">encryption_utils.py</code> (★ 暗号化ロジック)
     ├── <code class="bg-gray-700 text-gray-200">requirements.txt</code>
-    └── <code class="bg-gray-700 text-gray-200">.env</code>        (← ID/PW自動保存先)
-</pre>
+    └── <code class="bg-gray-700 text-gray-200">.env</code>        (← ID/PW(暗号化)自動保存先)
         </section>
 
         <section class="mb-10">
@@ -137,6 +137,18 @@
                     <p class="text-gray-700">「セットアップが正常に完了しました」というメッセージが表示されたら、ウィンドウを閉じてください。</p>
                     <p class="text-sm text-red-600 bg-red-50 p-3 rounded-lg mt-3 font-medium">
                         <span class="font-bold">エラーの場合:</span> 「Python が見つかりません」と表示された場合は、手順1に戻り、Pythonのインストール（特に「Add to PATH」のチェック）を確認してください。
+                    </p>
+                </li>
+                <li>
+                    <p class="flex items-center text-lg font-semibold">
+                        <span class="step-number">3</span> <code>.env</code> ファイルの作成
+                    </p>
+                    <p class="text-gray-700"><code>core</code> フォルダ内に、<code>.env</code> という名前で<strong>新規ファイルを作成</strong>し、以下の内容をコピーして貼り付けてください。</p>
+                    <pre>MY_LOGIN_ID=""
+                            MY_PASSWORD=""
+                            LOGIN_COMPANY_CODE="your_company_name"</pre>
+                    <p class="text-sm text-gray-600 bg-gray-50 p-3 rounded-lg mt-3">
+                        （IDとパスワードは空のままで構いません。初回ログイン成功時に自動で暗号化されて保存されます）
                     </p>
                 </li>
             </ol>
@@ -179,20 +191,36 @@
                     <p class="flex items-center text-lg font-semibold">
                         <span class="step-number">4</span> ログイン情報の自動保存
                     </p>
-                    <p class="text-gray-700">処理が（ログアウトまで）正常に完了すると、入力したIDとパスワードが <code>core/.env</code> ファイルに自動で保存されます。 これにより、次回の起動が楽になります。</p>
+                    <p class="text-gray-700">処理が（ログアウトまで）正常に完了すると、入力したIDとパスワードが <code>core/.env</code> ファイルに自動で<strong>暗号化されて</strong>保存されます。 これにより、次回の起動が楽になります。</p>
                     <p class="text-sm text-red-600 bg-red-50 p-3 rounded-lg mt-3 font-medium">
                         <span class="font-bold">注意:</span> ログインに失敗した場合は、間違ったID/PWは保存されません。
                     </p>
                 </li>
             </ol>
         </section>
-
+        <section class="mb-10">
+            <h2 class="text-2xl font-semibold text-gray-900 mb-4 flex items-center">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 mr-2 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+                5. 仕様変更・注意点 (V6.3)
+            </h2>
+            <p class="text-gray-700">V6.3より、セキュリティ向上のためID/PWの暗号化方式が変更されました。</p>
+             <ul class="list-disc list-inside bg-red-50 text-red-700 p-4 rounded-lg mt-4 space-y-2">
+                <li class="font-medium"><strong>PC固有の暗号化 (マシンロック)</strong><br>
+                    ID/PWを暗号化する際、PC固有のMACアドレスをキーとして使用します。これにより、<code>core</code> フォルダ（<code>.env</code> を含む）を**別のPCにコピーしても動作しません**。</li>
+                <li class="font-medium"><strong>PCを移行（買い替え）する場合</strong><br>
+                    新しいPCで、再度「初回セットアップ」からやり直す必要があります。（古い <code>.env</code> ファイルは引き継げません）</li>
+                <li class="font-medium"><strong>ランダムMACアドレスについて</strong><br>
+                    ノートPCなどで「ランダムなハードウェアアドレス」機能が有効だと、PCを再起動するたびにMACアドレスが変わり、<code>.env</code> が読めなくなる可能性があります。もしログインが頻繁に失敗する場合は、OSのWi-Fi設定でこの機能をオフにしてください。</li>
+            </ul>
+        </section>
         <section class="mb-10">
             <h2 class="text-2xl font-semibold text-gray-900 mb-4 flex items-center">
                 <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 mr-2 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                 </svg>
-                5. 結果の確認
+                6. 結果の確認
             </h2>
             <p class="text-gray-700">処理が成功すると、<code>output</code> フォルダ内に以下のファイルが作成（または更新）されます。</p>
              <ul class="list-disc list-inside bg-gray-50 p-4 rounded-lg mt-4">
@@ -208,7 +236,7 @@
                 <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 mr-2 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
-                6. 終了方法
+                7. 終了方法
             </h2>
             <p class="text-gray-700">
                 アプリを終了するには、<code>apprun.bat</code> を実行した際に開いた**黒いコンソール画面**を選択し、<code>Ctrl</code> キーを押しながら <code>C</code> キーを押してください。
@@ -221,4 +249,5 @@
     </div>
 
 </body>
+
 </html>
