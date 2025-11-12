@@ -1,5 +1,0 @@
-beautifulsoup4
-python-dotenv
-cmake
-streamlit
-requests
