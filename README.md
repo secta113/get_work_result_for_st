@@ -8,6 +8,7 @@ UIの表示には Streamlit を使用しています。
 指定年または全期間（2019年～）の明細データ（支給額、時間外、有給情報など）の自動取得
 取得した全データを output/年間サマリー_全期間.csv に蓄積保存
 指定した年の「暦年サマリー（1-12月）」および「年度時間外（4-翌3月）」の集計・表示
+ID/PWの保存時自動暗号化機能
 #### 必須環境
 Python 3.12 推奨
 （注意： manual.html 記載の通り、Python 3.14以降では動作しないことが確認されています）
@@ -41,5 +42,6 @@ project_root/
     ├── summary_calculator.py (集計処理)
     ├── date_utils.py     (対象月生成)
     ├── requirements.txt  (依存ライブラリ)
+    ├── encryption_utils.py (暗号化ライブラリ)
     └── .env              (※ID/PW自動保存先)
 ```
