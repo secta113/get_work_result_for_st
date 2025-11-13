@@ -28,7 +28,7 @@ V6.2にてID/PWの暗号化に対応しました。
 
 1.  **リポジトリのクローン**
     ```bash
-    git clone https://[your-repository-url]/payslip-automation.git
+    git clone https://github.com/secta113/get_work_result_for_st.git
     cd payslip-automation
     ```
 
