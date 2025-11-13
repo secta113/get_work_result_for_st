@@ -1,43 +1,71 @@
-# --- main_controller.py (V6.2) ---
-# (新規作成)
+# --- main_controller.py ---
 # 役割: UI (app.py) から呼び出され、全体の処理フローを制御する
+# 1. 処理対象月リストの生成
+# 2. 既存CSVの読み込み
+# 3. 取得すべき差分年月の計算
+# 4. ネットワーク処理 (network_handler) の呼び出し
+# 5. .env への資格情報保存 (暗号化)
+# 6. 新規データと既存データのマージ、CSV保存 (csv_handler)
+# 7. サマリー計算 (summary_calculator)
+# 8. app.py への結果返却
 
 import logging
 import os
 import datetime
+from typing import Tuple, Dict, Any
 
-# --- V6.0: 分割したモジュールをインポート ---
+# --- 分割したモジュールをインポート ---
 try:
     from date_utils import generate_target_months, generate_target_months_for_full_scan
-    from csv_handler import load_existing_csv, save_to_csv
+    from csv_handler import load_existing_csv, save_to_csv, _sort_key_for_csv
     from summary_calculator import calculate_rekigun_summary, calculate_nendo_overtime
     from network_handler import run_automation
-    from dotenv import set_key # ★ V6.2: .env の安全な更新のため
-    from encryption_utils import encrypt, CRYPTOGRAPHY_AVAILABLE # ★ V6.2: 暗号化のため
+    from dotenv import set_key # .env の安全な更新のため
+    from encryption_utils import encrypt, CRYPTOGRAPHY_AVAILABLE # 暗号化のため
 except ImportError as e:
-    logging.critical(f"V6.0 モジュールのインポートに失敗しました: {e}")
-    # app.py 側で streamlit を使ってエラー表示するため、ここではログのみ
+    logging.critical(f"モジュールのインポートに失敗しました: {e}")
+    # このエラーは app.py 側でキャッチされ、UIに表示される
     raise
 
 logger = logging.getLogger(__name__)
 
-# ★★★ V6.0: CSVファイル名をここで定義 ★★★
+# 全期間を保存するCSVファイル名を定義
 CSV_FILENAME = "年間サマリー_全期間.csv"
 
-def run_main_logic(login_id, password, ui_target_year, run_mode_is_full_scan, root_dir, env_path, status_placeholder):
+def run_main_logic(
+    login_id: str, 
+    password: str, 
+    ui_target_year: int, 
+    run_mode_is_full_scan: bool, 
+    root_dir: str, 
+    env_path: str, 
+    status_placeholder: Any
+) -> Tuple[bool, Dict[str, Any]]:
     """
-    V6.0: メインロジック
-    app.py から呼び出される
+    メインロジック。app.py (Streamlit UI) から呼び出される。
     
-    戻り値: (success: bool, result_data: dict)
-    
-    # (変更前) V6.1: root_dir は app.py の場所 (core フォルダ) を受け取る
-    # (変更後) V6.1: root_dir はプロジェクトのルート (output フォルダがある場所) を受け取る
+    Args:
+        login_id (str): ユーザーが入力したログインID。
+        password (str): ユーザーが入力したパスワード。
+        ui_target_year (int): ユーザーがUIで指定した西暦年。
+        run_mode_is_full_scan (bool): 「全期間スキャン」が押されたか (True) / 「実行」か (False)。
+        root_dir (str): プロジェクトのルートディレクトリパス (output フォルダがある場所)。
+        env_path (str): .env ファイルの絶対パス (ID/PW保存用)。
+        status_placeholder (Any): Streamlit の st.empty() オブジェクト (UIステータス更新用)。
+
+    Returns:
+        Tuple[bool, Dict[str, Any]]:
+            - (0) 処理が成功したか (True) / 失敗したか (False)。
+            - (1) 処理結果の辞書。
+                  成功時: {"csv_path": str, "final_data_ui": list, ...}
+                  失敗時: {"error": str}
+                  警告時: {"warning": str}
     """
     
     today = datetime.date.today()
     
     # --- 1. 対象月リスト(A)の作成 ---
+    # (A) = Webから取得「すべき」年月のリスト
     if not run_mode_is_full_scan:
         logger.info(f"「実行 (指定年)」モード。ID: {login_id[:4]}***, UI指定年: {ui_target_year}")
         required_months_set = generate_target_months(today, ui_target_year)
@@ -47,71 +75,71 @@ def run_main_logic(login_id, password, ui_target_year, run_mode_is_full_scan, ro
         required_months_set = generate_target_months_for_full_scan(today) 
         run_mode_message = "(全期間スキャン)"
     
-    logging.info(f"V6.0 {run_mode_message}: 取得対象リスト(A) ({len(required_months_set)}件) を作成しました。")
+    logging.info(f"{run_mode_message}: 取得対象リスト(A) ({len(required_months_set)}件) を作成しました。")
     
-    # 実行対象年 (requestsを起動する年) を計算
+    # 取得対象(A)が含まれる「年」のセットを作成 (network_handler を呼び出す単位)
     target_years_to_run = set()
     for reiwa_prefix in required_months_set: 
         try:
             reiwa_num = int(reiwa_prefix[2:4])
-            year = reiwa_num + 2018
+            year = reiwa_num + 2018 # 令和 -> 西暦
             target_years_to_run.add(year)
         except Exception: pass
     
     if not target_years_to_run:
-        logging.warning("V6.0: 処理対象年が0件です。")
+        logging.warning("処理対象年が0件です。")
         status_placeholder.warning("処理対象期間のデータが見つかりませんでした。")
-        # V6.0: 処理対象がなくても、既存データのサマリー表示は試みる
+        # 処理対象がなくても、既存データのサマリー表示は試みる
         target_years_to_run = set() # 空のセットとして継続
     
-    logging.info(f"V6.0 {run_mode_message}: 処理対象年 (計算結果): {sorted(list(target_years_to_run))}")
+    logging.info(f"{run_mode_message}: 処理対象年 (計算結果): {sorted(list(target_years_to_run))}")
 
     # --- 2. 既存CSVの読み込み ---
     
     all_existing_data = []
     all_existing_dates_set = set()
     
-    # V6.1: (変更前) root_dir (core) / output / CSV_FILENAME
-    # V6.1: (変更後) root_dir (project) / output / CSV_FILENAME
+    # (B) = 既存CSVに「既に保存されている」年月のリスト
     csv_path_rel = os.path.join("output", CSV_FILENAME)
     csv_path_abs = os.path.join(root_dir, csv_path_rel)
     
     try:
-        # ★ V6.0: csv_handler を呼び出し
         all_existing_data, all_existing_dates_set = load_existing_csv(csv_path_abs) 
     except Exception as e_load:
-        logging.error(f"V6.0: 全期間CSVの読み込みに失敗しました: {e_load}", exc_info=True)
-        # V6.0: 失敗したら app.py に dict を返して中断
+        logging.error(f"全期間CSVの読み込みに失敗しました: {e_load}", exc_info=True)
         return (False, {"error": f"全期間CSV ({csv_path_rel}) の読み込みに失敗しました。\n{e_load}"})
     
-    logging.info(f"V6.0: 全CSVから既得日付リスト(B) 合計: {len(all_existing_dates_set)} 件")
+    logging.info(f"全CSVから既得日付リスト(B) 合計: {len(all_existing_dates_set)} 件")
 
     # --- 3. 差分(C)の計算 ---
+    # (C) = (A) - (B) = 今回「本当にWebから取得」する年月のリスト
     final_target_dates_set = required_months_set - all_existing_dates_set
     
-    logging.info(f"V6.0: Set演算 (A-B): {len(required_months_set)}(A) - {len(all_existing_dates_set)}(B) = {len(final_target_dates_set)}(C)")
+    logging.info(f"Set演算 (A-B): {len(required_months_set)}(A) - {len(all_existing_dates_set)}(B) = {len(final_target_dates_set)}(C)")
 
     if not final_target_dates_set:
         status_placeholder.success("データは既に最新の状態でした。HTTP処理をスキップしました。")
-        logging.info("V6.0: 取得対象の差分データ(C)が0件のため、HTTP処理をスキップします。")
+        logging.info("取得対象の差分データ(C)が0件のため、HTTP処理をスキップします。")
         
     else:
         # --- 4. ネットワーク処理 (差分がある場合) ---
-        status_placeholder.info(f"V6.0 {run_mode_message}: {len(final_target_dates_set)} 件の新規データを取得します...")
+        status_placeholder.info(f"{run_mode_message}: {len(final_target_dates_set)} 件の新規データを取得します...")
         
         all_new_data_list = []
         http_success = True
         http_message = ""
         
+        # 処理対象年ごとに network_handler を呼び出す
         for year_to_run in sorted(list(target_years_to_run)):
             
-            # V6.0: network_handler を呼び出す
-            # (Streamlitのspinnerは app.py 側で制御する)
-            # ★ V6.0: network_handler を呼び出し
-            # V6.1: (変更前) root_dir (core) を渡す
-            # V6.1: (変更後) root_dir (project) を渡す
+            # (network_handler は、渡された差分セット(C)と年(year_to_run)を見て、
+            # 該当するデータのみを取得する)
             success, message, new_data_list_loop = run_automation(
-                login_id, password, year_to_run, root_dir, final_target_dates_set
+                login_id=login_id, 
+                password=password, 
+                target_year=year_to_run, 
+                root_dir=root_dir, 
+                final_target_dates_set=final_target_dates_set
             )
 
             if not success:
@@ -128,13 +156,13 @@ def run_main_logic(login_id, password, ui_target_year, run_mode_is_full_scan, ro
         if http_success:
             status_placeholder.success(f"データ取得が完了しました！ (全対象年で新規 {len(all_new_data_list)} 件)")
             
-            # --- ★ V6.2: .env 保存 (暗号化) ---
+            # --- .env 保存 (暗号化) ---
             try:
-                # 1. 値を暗号化
+                # ログイン成功時のみ、ID/PWを .env に保存（上書き）する
                 encrypted_id = encrypt(login_id)
                 encrypted_pw = encrypt(password)
                 
-                # 2. set_key で .env ファイルを安全に更新
+                # python-dotenv の set_key で .env ファイルを安全に更新
                 set_key(env_path, "MY_LOGIN_ID", encrypted_id)
                 set_key(env_path, "MY_PASSWORD", encrypted_pw)
                 
@@ -145,18 +173,15 @@ def run_main_logic(login_id, password, ui_target_year, run_mode_is_full_scan, ro
 
             except Exception as e:
                 logging.error(f".env ファイルへの保存に失敗しました: {e}", exc_info=True)
-                # V6.0: .env保存失敗は警告のみ (app.py側で表示)
+                # .env保存失敗は致命的ではないため、警告としてUIに返す
                 return (True, {"warning": f".env ファイルへの保存に失敗しました: {e}"})
 
             # --- 6. CSVへのマージと保存 ---
             all_existing_data.extend(all_new_data_list)
-            logging.info(f"V6.0: 全 {len(all_new_data_list)} 件の新規データを既存リスト (現在 {len(all_existing_data)} 件) にマージしました。")
+            logging.info(f"全 {len(all_new_data_list)} 件の新規データを既存リスト (現在 {len(all_existing_data)} 件) にマージしました。")
 
-            logging.info(f"V6.0: 全期間CSVを保存中... (合計 {len(all_existing_data)} 件)")
+            logging.info(f"全期間CSVを保存中... (合計 {len(all_existing_data)} 件)")
             
-            # ★ V6.0: csv_handler を呼び出し
-            # V6.1: (変更前) root_dir (core) を渡す
-            # V6.1: (変更後) root_dir (project) を渡す
             csv_path_result = save_to_csv(all_existing_data, root_dir, CSV_FILENAME)
                     
             if not csv_path_result:
@@ -164,15 +189,15 @@ def run_main_logic(login_id, password, ui_target_year, run_mode_is_full_scan, ro
                 return (False, {"error": f"全期間CSV ({CSV_FILENAME}) の保存に失敗しました。"})
         
         else:
-            # V6.0: HTTPエラー
-            logging.error(f"V6.0: HTTP処理が失敗しました: {http_message}")
+            # HTTPエラー
+            logging.error(f"HTTP処理が失敗しました: {http_message}")
             status_placeholder.error(f"エラーが発生しました:\n{http_message}")
             return (False, {"error": http_message})
     
     # --- 7. 最終サマリーの計算 ---
     # (HTTP処理をスキップした場合も、ここに来る)
     
-    logging.info(f"V6.0: UI指定年 ({ui_target_year}年) のサマリー計算を開始します。")
+    logging.info(f"UI指定年 ({ui_target_year}年) のサマリー計算を開始します。")
     
     # 全期間データ (all_existing_data) から、UI指定年のデータ (final_data_ui) を抽出
     reiwa_year_ui = ui_target_year - 2018
@@ -184,20 +209,18 @@ def run_main_logic(login_id, password, ui_target_year, run_mode_is_full_scan, ro
         if target_reiwa_year_str in date_str:
             final_data_ui.append(item)
     
-    # V6.0: 読み込み時にソートされているが、サマリー計算前にもソート (V5.0動作)
-    # (CSV保存時のソートキーを流用)
+    # UI表示用に、日付順でソートする
     try:
-        from csv_handler import _sort_key_for_csv
         final_data_ui.sort(key=_sort_key_for_csv)
     except Exception as e_sort_ui:
-        logging.warning(f"V6.0: UIデータ抽出後のソートに失敗 (無視します): {e_sort_ui}")
+        logging.warning(f"UIデータ抽出後のソートに失敗 (無視します): {e_sort_ui}")
 
     
     summary_data_rekigun = {}
     summary_nendo_overtime = 0.0
     
     if final_data_ui:
-        # (V5.0) サマリー計算用の前処理
+        # サマリー計算用の前処理
         # (N/A を 0.0 に変換する)
         calc_data_list = []
         keys_to_convert = [
@@ -213,26 +236,26 @@ def run_main_logic(login_id, password, ui_target_year, run_mode_is_full_scan, ro
                     calc_item[key] = 0.0 # N/A や文字列を 0.0 に変換
             calc_data_list.append(calc_item)
 
-        # ★ V6.0: summary_calculator を呼び出し (暦年)
+        # 暦年サマリーの計算
         summary_data_rekigun = calculate_rekigun_summary(calc_data_list)
         
-        # (V5.0) 最新月の情報は N/A を保持したオリジナルのリスト (final_data_ui) から取得し直す
+        # 最新月の有給情報は、N/A を保持したオリジナルのリスト (final_data_ui) から取得し直す
         latest_item_original = final_data_ui[-1]
         summary_data_rekigun['latest_paid_leave_time'] = latest_item_original.get('有給消化時間', 'N/A')
         summary_data_rekigun['latest_paid_leave_used_days'] = latest_item_original.get('有給使用日数', 'N/A')
         summary_data_rekigun['latest_paid_leave_remaining_days'] = latest_item_original.get('有給残日数', 'N/A')
 
-        # ★ V6.0: summary_calculator を呼び出し (年度)
-        # (全期間データ all_existing_data を渡す)
+        # 年度時間外の計算 (全期間データ all_existing_data を渡す)
         summary_nendo_overtime = calculate_nendo_overtime(all_existing_data, ui_target_year)
     
     else:
-        logging.info(f"V6.0: {ui_target_year}年 のデータは 0件 でした。")
-        # V6.0: 0件でも年度時間外の計算は試みる (V5.0動作)
+        logging.info(f"{ui_target_year}年 のデータは 0件 でした。")
+        # 0件でも年度時間外の計算は試みる (前年3月など、UI指定年以外のデータが使われるため)
         summary_nendo_overtime = calculate_nendo_overtime(all_existing_data, ui_target_year)
 
 
     # --- 8. その他の処理年 (UI表示用) ---
+    # (「全期間スキャン」実行時、UI指定年以外の年も処理された場合)
     other_years_data = {}
     other_years_processed = {y for y in target_years_to_run if y != ui_target_year}
     
@@ -249,7 +272,7 @@ def run_main_logic(login_id, password, ui_target_year, run_mode_is_full_scan, ro
     # --- 9. 成功時の戻り値を作成 ---
     
     success_result = {
-        "csv_path": csv_path_rel, # V6.1: "output/..." の相対パス
+        "csv_path": csv_path_rel, # "output/..." の相対パス
         "ui_target_year": ui_target_year,
         "final_data_ui": final_data_ui, # UI表示用のデータ (N/A 保持)
         "summary_data_rekigun": summary_data_rekigun, # 暦年集計
